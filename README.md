@@ -73,8 +73,12 @@ Please follow the instructions below to experience DeepVerse!
         --prompt_type text \
         --prompt 'The character rides a horse and walks on the street'
     ```
-    
-    
+
+
+python run.py  --model_path  C:\workspace\world\DeepVerse\checkpoint --input_image  C:\workspace\world\Infinite-World\assets\example_case\racer\Screenshot.png --prompt_type text  --prompt 'The car is driving slowly in the direction of the road'
+
+python run.py  --model_path  C:\workspace\world\DeepVerse\checkpoint --input_image  ./assets/demo1.png  --prompt_type text  --prompt 'The character rides a horse and walks on the street'
+
     The inference process runs on a single NVIDIA A800 with a speed of `4 FPS`, while the video is saved at `20 FPS`. The maximum GPU memory usage during inference is `17GB`. 
     All result files will be saved in the `output` folder by default.We present some sampling results. 
 

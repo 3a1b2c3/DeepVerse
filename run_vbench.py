@@ -9,9 +9,9 @@ import time
 import json
 
 _SCRIPT_DIR        = os.path.dirname(os.path.abspath(__file__))
-_VBENCH_ROOT       = os.path.join(_SCRIPT_DIR, "..", "VBench", "vbench2_beta_i2v")
-_DEFAULT_INFO_JSON = os.path.join(_VBENCH_ROOT, "vbench2_i2v_full_info.json")
-_DEFAULT_CROP_DIR  = os.path.join(_VBENCH_ROOT, "vbench2_beta_i2v", "data", "crop")
+_VBENCH_ROOT       = os.path.join(_SCRIPT_DIR, "..", "VBench", "vbench2_beta_i2v", "vbench2_beta_i2v", "data")
+_DEFAULT_INFO_JSON = os.path.join(_VBENCH_ROOT, "i2v-bench-info.json")
+_DEFAULT_CROP_DIR  = os.path.join(_VBENCH_ROOT, "crop")
 
 
 def _safe(prompt):
@@ -54,7 +54,7 @@ def create_model_config():
         'history_guidance_scale': 6.0,
         'history_downsample_ratio': 2,
 
-        'text_embeds_path': './assets/text_embeds_len77.pt',
+        'text_embeds_path': os.path.join(_SCRIPT_DIR, 'assets', 'text_embeds_len77.pt'),
         'vae_downsample': 8,
         'use_motion_prompt': True,
         'no_need_depth': False,
@@ -207,7 +207,7 @@ def add_controler_on_image(merge, prompt):
         overlay           = Image.fromarray(x)
         return overlay
         
-    controler_icon_path = './assets/icons'
+    controler_icon_path = os.path.join(_SCRIPT_DIR, 'assets', 'icons')
     icon_size     = 29 # 232 / 8
     
     clock         = Image.open(os.path.join(controler_icon_path,         'clock.png')).convert("RGBA").resize((icon_size, icon_size))
@@ -420,8 +420,8 @@ def main(
 
     OUTPUT_VIDEO_PATH = output_path
     VIDEO_LENGTH = 57
-    VIDEO_HEIGHT = 384
-    VIDEO_WIDTH  = 512
+    VIDEO_HEIGHT = 720
+    VIDEO_WIDTH  = 960
 
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
     DTYPE  = torch.bfloat16 if DEVICE == "cuda" else torch.float32
@@ -446,7 +446,7 @@ def main(
     print(f'[info] generation: {ed - st:.1f}s  ({gen_fps:.2f} FPS)')
 
     # ===================== 5. save output =======================
-    save_video(output, OUTPUT_VIDEO_PATH, fps=20, add_controler=(add_controler and (prompt_type == 'action')), add_depth=(add_depth and (model_cfg['no_need_depth'] == False)), gen_fps=gen_fps)
+    save_video(output, OUTPUT_VIDEO_PATH, fps=24, add_controler=(add_controler and (prompt_type == 'action')), add_depth=(add_depth and (model_cfg['no_need_depth'] == False)), gen_fps=gen_fps)
 
     if add_ply and (not model_cfg['no_need_depth']): 
         save_ply(output, OUTPUT_VIDEO_PATH.replace('.mp4', '.ply'))
@@ -495,12 +495,13 @@ def vbench_batch(
     allowed = {t.strip() for t in image_types.split(',') if t.strip()} if image_types else None
     seen, prompts = set(), []
     for e in entries:
-        name = e['image_name']
+        name = e['file_name']
         if name in seen: continue
-        if allowed and e.get('image_type') not in allowed: continue
-        if populate is not None and (e.get('image_type') in _POPULATED_TYPES) != populate: continue
+        if allowed and e.get('type') not in allowed: continue
+        if populate is not None and (e.get('type') in _POPULATED_TYPES) != populate: continue
         seen.add(name)
-        prompts.append((name, e['prompt_en']))
+        caption = e.get('caption', os.path.splitext(name)[0])
+        prompts.append((name, caption))
 
     print(f'[vbench] {len(prompts)} prompts × {num_samples} samples = {len(prompts) * num_samples} total')
 
@@ -532,7 +533,8 @@ def vbench_batch(
             continue
 
         for sample_idx in range(num_samples):
-            out_path = os.path.join(out_dir, f'{_safe(prompt)}-{sample_idx}.mp4')
+            sample_seed = seed + sample_idx
+            out_path = os.path.join(out_dir, f'{_safe(prompt)}-{sample_idx}-{sample_seed}.mp4')
             if os.path.exists(out_path):
                 skipped += 1
                 done += 1
@@ -549,7 +551,7 @@ def vbench_batch(
             print(f'[vbench] [{done+1}/{total}  {pct:.0f}%{eta}]  prompt {task_idx+1}/{len(prompts)}  sample {sample_idx+1}/{num_samples}: {prompt[:50]}')
 
             from transformers.trainer_utils import set_seed as _set_seed
-            _set_seed(seed + sample_idx)
+            _set_seed(sample_seed)
             clip_prompt = action_prompt if prompt_type == 'action' else prompt
             batch_dict = prepare_input_data(image_path, frames, 384, 512, prompt_type, clip_prompt)
             try:
@@ -558,7 +560,7 @@ def vbench_batch(
                     output = pipeline.generate(batch_dict)
                     ed = time.time()
                 gen_fps = frames / (ed - st)
-                save_video(output, out_path, fps=20, gen_fps=gen_fps)
+                save_video(output, out_path, fps=24, gen_fps=gen_fps)
                 print(f'[vbench] saved  {out_path}  ({gen_fps:.1f} gen-fps)')
                 stats_w.writerow([task_idx, prompt, sample_idx, f'{ed-st:.2f}', f'{gen_fps:.2f}', out_path, 'ok'])
                 stats_f.flush()

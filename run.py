@@ -300,7 +300,7 @@ def prepare_input_data(image_path, video_length, height, width, prompt_type, pro
     return batch_dict
 
 
-def save_video(output, output_path, fps=24, add_controler=False, add_depth=False):
+def save_video(output, output_path, fps=24, add_controler=False, add_depth=False, gen_fps=None):
     import matplotlib
 
     def colorize_depth(depth, min_depth, max_depth, cmap="Spectral"):
@@ -333,7 +333,17 @@ def save_video(output, output_path, fps=24, add_controler=False, add_depth=False
             video_np_[i] = np.concatenate([video_np[i], disparity_], axis=1)
         video_np = video_np_
 
+    from PIL import ImageDraw, ImageFont
     frames = [Image.fromarray(frame) for frame in video_np]
+
+    if gen_fps is not None:
+        total_frames = len(frames)
+        for i, frame in enumerate(frames):
+            draw = ImageDraw.Draw(frame)
+            text = f"Gen {gen_fps:.1f} FPS  |  {i+1}/{total_frames}"
+            # shadow for readability
+            draw.text((9,  9),  text, fill=(0, 0, 0))
+            draw.text((8,  8),  text, fill=(255, 255, 0))
 
     if add_controler:
         for i in range(len(frames)):
@@ -382,6 +392,12 @@ def main(
 ):
     set_seed(seed)
 
+    # perf optimizations
+    if torch.cuda.is_available():
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+
     # ===================== 1. load config ========================
     model_cfg = create_model_config()
     model_cfg['no_need_depth'] = no_need_depth
@@ -409,13 +425,16 @@ def main(
     batch_dict = prepare_input_data(input_image, VIDEO_LENGTH, VIDEO_HEIGHT, VIDEO_WIDTH, prompt_type, prompt)
 
     # ===================== 4. generate =========================
-    with torch.no_grad():
+    with torch.inference_mode():
         st = time.time()
         output = pipeline.generate(batch_dict)
         ed = time.time()
 
+    gen_fps = VIDEO_LENGTH / (ed - st)
+    print(f'[info] generation: {ed - st:.1f}s  ({gen_fps:.2f} FPS)')
+
     # ===================== 5. save output =======================
-    save_video(output, OUTPUT_VIDEO_PATH, fps=20, add_controler=(add_controler and (prompt_type == 'action')), add_depth=(add_depth and (model_cfg['no_need_depth'] == False)))
+    save_video(output, OUTPUT_VIDEO_PATH, fps=20, add_controler=(add_controler and (prompt_type == 'action')), add_depth=(add_depth and (model_cfg['no_need_depth'] == False)), gen_fps=gen_fps)
 
     if add_ply and (not model_cfg['no_need_depth']): 
         save_ply(output, OUTPUT_VIDEO_PATH.replace('.mp4', '.ply'))
