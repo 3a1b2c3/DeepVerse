@@ -479,10 +479,12 @@ def vbench_batch(
     out_dir    = os.path.abspath(output_dir)
     os.makedirs(out_dir, exist_ok=True)
 
-    stats_path = os.path.join(os.path.dirname(out_dir), 'vbench_stats.csv')
-    stats_f    = open(stats_path, 'w', newline='', encoding='utf-8')
-    stats_w    = csv.writer(stats_f)
-    stats_w.writerow(['task_idx', 'prompt', 'sample_idx', 'duration_s', 'gen_fps', 'out_path', 'status'])
+    stats_path     = os.path.join(os.path.dirname(out_dir), 'vbench_stats.csv')
+    _stats_is_new  = not os.path.exists(stats_path)
+    stats_f        = open(stats_path, 'a', newline='', encoding='utf-8')
+    stats_w        = csv.writer(stats_f)
+    if _stats_is_new:
+        stats_w.writerow(['task_idx', 'prompt', 'sample_idx', 'duration_s', 'gen_fps', 'out_path', 'status'])
 
     if not os.path.isfile(info_json):
         print(f'[vbench] ERROR: info JSON not found: {info_json}'); return
@@ -525,6 +527,8 @@ def vbench_batch(
     total = len(prompts) * num_samples
     done = 0
     t_start = time.time()
+    _ok_total_duration = 0.0
+    _ok_count = 0
 
     for task_idx, (image_name, prompt) in enumerate(prompts):
         image_path = os.path.join(image_dir, image_name)
@@ -538,7 +542,12 @@ def vbench_batch(
             if os.path.exists(out_path):
                 skipped += 1
                 done += 1
-                stats_w.writerow([task_idx, prompt, sample_idx, '', '', out_path, 'skipped'])
+                if _ok_count > 0:
+                    _avg_dur = _ok_total_duration / _ok_count
+                    _est_fps = frames / _avg_dur
+                    stats_w.writerow([task_idx, prompt, sample_idx, f'{_avg_dur:.2f}', f'{_est_fps:.2f}', out_path, 'skipped'])
+                else:
+                    stats_w.writerow([task_idx, prompt, sample_idx, '', '', out_path, 'skipped'])
                 stats_f.flush()
                 continue
 
@@ -560,6 +569,8 @@ def vbench_batch(
                     output = pipeline.generate(batch_dict)
                     ed = time.time()
                 gen_fps = frames / (ed - st)
+                _ok_total_duration += (ed - st)
+                _ok_count += 1
                 save_video(output, out_path, fps=24, gen_fps=gen_fps)
                 print(f'[vbench] saved  {out_path}  ({gen_fps:.1f} gen-fps)')
                 stats_w.writerow([task_idx, prompt, sample_idx, f'{ed-st:.2f}', f'{gen_fps:.2f}', out_path, 'ok'])
