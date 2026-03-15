@@ -163,6 +163,36 @@ def raymap_to_trans_matrix(
     return camera_pose, intrinsic
 
 
+def replace_linear_with_nf4(model):
+    """Replace all nn.Linear layers with bitsandbytes NF4 Linear4bit."""
+    import bitsandbytes as bnb
+    replaced = 0
+    for name, module in model.named_modules():
+        if isinstance(module, torch.nn.Linear):
+            parent_name = '.'.join(name.split('.')[:-1])
+            child_name  = name.split('.')[-1]
+            parent = model.get_submodule(parent_name) if parent_name else model
+            nf4 = bnb.nn.Linear4bit(
+                module.in_features, module.out_features,
+                bias=module.bias is not None,
+                compute_dtype=torch.bfloat16,
+                compress_statistics=True,
+                quant_type='nf4',
+            )
+            nf4.weight = bnb.nn.Params4bit(
+                module.weight.data,
+                requires_grad=False,
+                compress_statistics=True,
+                quant_type='nf4',
+            )
+            if module.bias is not None:
+                nf4.bias = torch.nn.Parameter(module.bias.data.clone())
+            setattr(parent, child_name, nf4)
+            replaced += 1
+    print(f'[DeepVerse] NF4: quantized {replaced} linear layers')
+    return model
+
+
 class InferencePipeline:
     """
     A consolidated pipeline for performing inference with the DeepVerse model.
@@ -170,10 +200,11 @@ class InferencePipeline:
     """
 
     def __init__(
-        self, 
-        model_cfg: Dict, 
-        device: str = "cuda", 
-        torch_dtype: torch.dtype = torch.bfloat16
+        self,
+        model_cfg: Dict,
+        device: str = "cuda",
+        torch_dtype: torch.dtype = torch.bfloat16,
+        nf4: bool = False,
     ):
 
         super().__init__()
@@ -186,7 +217,10 @@ class InferencePipeline:
         self.downsample = 8
 
         self.model, self.vae, self.scheduler, self.text_encoder = self._create_models()
-        
+
+        if nf4:
+            self.model = replace_linear_with_nf4(self.model)
+
         self.model.eval().to(self.device, dtype=self.dtype)
         self.vae.eval().to(self.device, dtype=self.dtype)
         self.text_encoder.eval().to(self.device, dtype=self.dtype)
@@ -204,10 +238,9 @@ class InferencePipeline:
         """Instantiates the DiT, VAE, and Scheduler models."""
         dit_config = self.model_cfg['dit_config']
         dit = MMDiT.from_pretrained(
-            dit_config['model_path'], 
-            torch_dtype=self.dtype, 
+            dit_config['model_path'],
+            torch_dtype=self.dtype,
             use_mixed_training=False,
-            # use_flash_attn=True,
         )
 
         vae_config = self.model_cfg['vae_config']

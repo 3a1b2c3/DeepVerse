@@ -7,6 +7,7 @@ import csv
 import re
 import time
 import json
+import psutil
 
 _SCRIPT_DIR        = os.path.dirname(os.path.abspath(__file__))
 _VBENCH_ROOT       = os.path.join(_SCRIPT_DIR, "..", "VBench", "vbench2_beta_i2v", "vbench2_beta_i2v", "data")
@@ -401,6 +402,7 @@ def main(
     no_need_depth=False,
     add_controler=False, add_depth=False, add_ply=False,
     output_path='output/generated_video.mp4',
+    nf4=True,
 ):
     set_seed(seed)
 
@@ -431,6 +433,7 @@ def main(
         model_cfg=model_cfg,
         device=DEVICE,
         torch_dtype=DTYPE,
+        nf4=nf4,
     )
 
     # ===================== 3. prepare input ====================
@@ -470,8 +473,11 @@ def vbench_batch(
     crop_dir=None,
     no_need_depth=True,
     frames=161,
+    height=720,
+    width=960,
     prompt_type='action',
     action_prompt=_DEFAULT_ACTION_PROMPT,
+    nf4=True,
 ):
     info_json  = os.path.abspath(vbench_info_json or _DEFAULT_INFO_JSON)
     crop_base  = os.path.abspath(crop_dir or _DEFAULT_CROP_DIR)
@@ -484,7 +490,7 @@ def vbench_batch(
     stats_f        = open(stats_path, 'a', newline='', encoding='utf-8')
     stats_w        = csv.writer(stats_f)
     if _stats_is_new:
-        stats_w.writerow(['task_idx', 'prompt', 'sample_idx', 'duration_s', 'gen_fps', 'out_path', 'status'])
+        stats_w.writerow(['task_idx', 'prompt', 'sample_idx', 'duration_s', 'gen_fps', 'ram_gb', 'vram_gb', 'out_path', 'status'])
 
     if not os.path.isfile(info_json):
         print(f'[vbench] ERROR: info JSON not found: {info_json}'); return
@@ -494,6 +500,8 @@ def vbench_batch(
     with open(info_json, encoding='utf-8') as f:
         entries = json.load(f)
 
+    if isinstance(image_types, (list, tuple)):
+        image_types = ','.join(image_types)
     allowed = {t.strip() for t in image_types.split(',') if t.strip()} if image_types else None
     seen, prompts = set(), []
     for e in entries:
@@ -521,7 +529,7 @@ def vbench_batch(
 
     DEVICE   = 'cuda' if torch.cuda.is_available() else 'cpu'
     DTYPE    = torch.bfloat16 if DEVICE == 'cuda' else torch.float32
-    pipeline = InferencePipeline(model_cfg=model_cfg, device=DEVICE, torch_dtype=DTYPE)
+    pipeline = InferencePipeline(model_cfg=model_cfg, device=DEVICE, torch_dtype=DTYPE, nf4=nf4)
 
     skipped = generated = errors = 0
     total = len(prompts) * num_samples
@@ -542,12 +550,7 @@ def vbench_batch(
             if os.path.exists(out_path):
                 skipped += 1
                 done += 1
-                if _ok_count > 0:
-                    _avg_dur = _ok_total_duration / _ok_count
-                    _est_fps = frames / _avg_dur
-                    stats_w.writerow([task_idx, prompt, sample_idx, f'{_avg_dur:.2f}', f'{_est_fps:.2f}', out_path, 'skipped'])
-                else:
-                    stats_w.writerow([task_idx, prompt, sample_idx, '', '', out_path, 'skipped'])
+                stats_w.writerow([task_idx, prompt, sample_idx, '', '', '', '', out_path, 'skipped'])
                 stats_f.flush()
                 continue
 
@@ -562,7 +565,7 @@ def vbench_batch(
             from transformers.trainer_utils import set_seed as _set_seed
             _set_seed(sample_seed)
             clip_prompt = action_prompt if prompt_type == 'action' else prompt
-            batch_dict = prepare_input_data(image_path, frames, 384, 512, prompt_type, clip_prompt)
+            batch_dict = prepare_input_data(image_path, frames, height, width, prompt_type, clip_prompt)
             try:
                 with torch.inference_mode():
                     st = time.time()
@@ -571,14 +574,16 @@ def vbench_batch(
                 gen_fps = frames / (ed - st)
                 _ok_total_duration += (ed - st)
                 _ok_count += 1
+                _ram_gb  = psutil.Process().memory_info().rss / 1024**3
+                _vram_gb = torch.cuda.memory_allocated() / 1024**3 if torch.cuda.is_available() else 0.0
                 save_video(output, out_path, fps=24, gen_fps=gen_fps)
-                print(f'[vbench] saved  {out_path}  ({gen_fps:.1f} gen-fps)')
-                stats_w.writerow([task_idx, prompt, sample_idx, f'{ed-st:.2f}', f'{gen_fps:.2f}', out_path, 'ok'])
+                print(f'[vbench] saved  {out_path}  ({gen_fps:.1f} gen-fps  RAM {_ram_gb:.1f}GB  VRAM {_vram_gb:.1f}GB)')
+                stats_w.writerow([task_idx, prompt, sample_idx, f'{ed-st:.2f}', f'{gen_fps:.2f}', f'{_ram_gb:.2f}', f'{_vram_gb:.2f}', out_path, 'ok'])
                 stats_f.flush()
                 generated += 1
             except Exception as exc:
                 print(f'[vbench] ERROR task {task_idx} sample {sample_idx}: {exc}')
-                stats_w.writerow([task_idx, prompt, sample_idx, '', '', out_path, 'error'])
+                stats_w.writerow([task_idx, prompt, sample_idx, '', '', '', '', out_path, 'error'])
                 stats_f.flush()
                 errors += 1
             done += 1
