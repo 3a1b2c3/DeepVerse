@@ -19,18 +19,23 @@
 setlocal enableextensions enabledelayedexpansion
 cd /d "%~dp0"
 
-set VENV=%~dp0.venv
-set PY=%VENV%\Scripts\python.exe
 set CKPT=%~dp0checkpoint
 
-if not exist "%PY%" (
-    echo ERROR: venv python not found: %PY%
-    echo Run environment_setup.bat first.
-    exit /b 2
+:: Python selection (no hard venv assumption):
+::   1. DEEPVERSE_PY env var overrides everything (absolute path or command name)
+::   2. .venv\Scripts\python.exe if present
+::   3. plain `python` on PATH (whatever's active)
+if defined DEEPVERSE_PY (
+    set PY=%DEEPVERSE_PY%
+) else if exist "%~dp0.venv\Scripts\python.exe" (
+    set PY=%~dp0.venv\Scripts\python.exe
+) else (
+    set PY=python
 )
+
 if not exist "%CKPT%\transformer" (
     echo ERROR: checkpoint\transformer\ missing.
-    echo Run environment_setup.bat (or python download.py) first.
+    echo Run environment_setup.bat ^(or python download.py^) first.
     exit /b 2
 )
 
@@ -51,6 +56,7 @@ goto parse_args
 echo ============================================================
 echo DeepVerse example runner  ^| demos: %DEMOS%
 echo ============================================================
+echo   python     : %PY%
 echo   model_path : %CKPT%
 echo   passthrough:%PASSTHROUGH%
 echo ============================================================
@@ -78,5 +84,5 @@ for %%D in (%DEMOS%) do (
 )
 
 echo.
-echo Done. See output\generated_video.mp4 (and .ply files for demo3).
+echo Done. See output\generated_video.mp4 ^(and .ply files for demo3^).
 endlocal
