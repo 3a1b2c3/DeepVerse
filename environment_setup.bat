@@ -1,14 +1,18 @@
 @echo off
 :: DeepVerse environment setup + model download (Windows).
 ::
-:: Mirrors the README install steps using uv instead of conda:
+:: Mirrors the README install steps using uv instead of conda, but pinned to
+:: the cu128 toolchain installed on this box (README originally specifies cu121):
 ::   1. Creates .venv with Python 3.10
-::   2. Installs torch 2.4.0 / torchvision 0.19.0 from the PyTorch cu121 index
+::   2. Installs torch 2.7.0 / torchvision 0.22.0 from the PyTorch cu128 index
+::      (cu128 has no wheel for torch 2.4.0 — 2.7 is the earliest cu128 build)
 ::   3. pip-installs requirements.txt
 ::   4. Snapshots SOTAMak1r/DeepVerse1.1 weights into .\checkpoint via download.py
 ::
-:: Override torch CUDA build:
-::   set DEEPVERSE_TORCH_INDEX=https://download.pytorch.org/whl/cu128   (uses cu128 wheels)
+:: Override torch CUDA build / version:
+::   set DEEPVERSE_TORCH_INDEX=https://download.pytorch.org/whl/cu121   (revert to README's cu121)
+::   set DEEPVERSE_TORCH_VER=2.10.0                                    (share venv with matrix3 / MIND)
+::   set DEEPVERSE_TORCHVISION_VER=0.25.0
 ::
 :: Override HF auth (if the repo is gated):
 ::   set HF_TOKEN=hf_xxx  (read by download.py via env, no source edit needed)
@@ -22,7 +26,9 @@ cd /d "%~dp0"
 
 set VENV=%~dp0.venv
 set PY=%VENV%\Scripts\python.exe
-if not defined DEEPVERSE_TORCH_INDEX set DEEPVERSE_TORCH_INDEX=https://download.pytorch.org/whl/cu121
+if not defined DEEPVERSE_TORCH_INDEX set DEEPVERSE_TORCH_INDEX=https://download.pytorch.org/whl/cu128
+if not defined DEEPVERSE_TORCH_VER   set DEEPVERSE_TORCH_VER=2.7.0
+if not defined DEEPVERSE_TORCHVISION_VER set DEEPVERSE_TORCHVISION_VER=0.22.0
 
 if not exist "%PY%" (
     echo Creating venv at %VENV% with Python 3.10 ...
@@ -31,8 +37,8 @@ if not exist "%PY%" (
 )
 
 echo.
-echo Installing torch 2.4.0 / torchvision 0.19.0 from %DEEPVERSE_TORCH_INDEX% ...
-uv pip install --python "%PY%" --index-url "%DEEPVERSE_TORCH_INDEX%" "torch==2.4.0" "torchvision==0.19.0"
+echo Installing torch %DEEPVERSE_TORCH_VER% / torchvision %DEEPVERSE_TORCHVISION_VER% from %DEEPVERSE_TORCH_INDEX% ...
+uv pip install --python "%PY%" --index-url "%DEEPVERSE_TORCH_INDEX%" "torch==%DEEPVERSE_TORCH_VER%" "torchvision==%DEEPVERSE_TORCHVISION_VER%"
 if errorlevel 1 ( echo ERROR: torch install failed & exit /b 1 )
 
 echo.
